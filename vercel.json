@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "public": true,
+  "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/Presentacion_Ejecutiva_Retail_Omnicanal.html"
+    }
+  ]
+}

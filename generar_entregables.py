@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""Genera los entregables A, B y D del proyecto final a partir de Caso_1_Retail_Omnicanal.xlsx."""
+
+from pathlib import Path
+
+import pandas as pd
+
+from preparar_datos import RUTA_CASO, preparar_todo
+
+RUTA_ENTREGA = Path("Caso_1_Retail_Omnicanal_Entrega.xlsx")
+RUTA_PRESENTACION = Path("Presentacion_Ejecutiva_Retail_Omnicanal.html")
+
+
+def generar_excel(ruta_salida: Path = RUTA_ENTREGA) -> Path:
+    datos = preparar_todo(RUTA_CASO)
+
+    with pd.ExcelWriter(ruta_salida, engine="openpyxl") as writer:
+        # Guía concisa del proyecto
+        datos["guia"].to_excel(writer, sheet_name="00_Guia_Proyecto", index=False, header=False)
+
+        # Fuente original
+        datos["raw"].to_excel(writer, sheet_name="01_RAW", index=False)
+
+        # Resultado de limpieza
+        datos["ventas"].to_excel(writer, sheet_name="02_Ventas_Limpias", index=False)
+        datos["eliminadas"].to_excel(writer, sheet_name="03_Ventas_Eliminadas", index=False)
+        datos["resumen_eliminaciones"].to_excel(writer, sheet_name="03b_Resumen_Eliminados", index=False, header=False)
+
+        # Tablas de soporte para análisis
+        metas_header = pd.DataFrame([["Metas únicas por mes · región · canal (Auditadas y Corregidas)"] + [""] * 12])
+        metas_header.to_excel(writer, sheet_name="04_Metas_Limpias", index=False, header=False, startrow=0)
+        datos["metas"].to_excel(writer, sheet_name="04_Metas_Limpias", index=False, startrow=2)
+
+        # Auditoría detallada de las 14 combinaciones
+        aud_header = pd.DataFrame([["Auditoría forense de las 14 combinaciones con conflicto o meta ausente"] + [""] * 7])
+        aud_header.to_excel(writer, sheet_name="04b_Auditoria_14_Metas", index=False, header=False, startrow=0)
+        datos["auditoria_metas"].to_excel(writer, sheet_name="04b_Auditoria_14_Metas", index=False, startrow=2)
+
+        inv_header = pd.DataFrame([["Inventario mensual separado de las ventas"] + [""] * 8])
+        inv_header.to_excel(writer, sheet_name="05_Inventario_Mensual", index=False, header=False, startrow=0)
+        datos["inventario"].to_excel(writer, sheet_name="05_Inventario_Mensual", index=False, startrow=2)
+
+        # Documentación consolidada (calidad + mapeos + KPIs + plan)
+        datos["registro_calidad"].to_excel(writer, sheet_name="06_Registro_y_Analisis", index=False, header=False)
+        datos["kpis_y_plan"].to_excel(writer, sheet_name="07_KPIs_y_Plan", index=False, header=False)
+        datos["plan_accion"].to_excel(writer, sheet_name="08_Plan_Accion", index=False)
+        datos["kpis"].to_excel(writer, sheet_name="09_KPI_Detalle", index=False)
+
+    return ruta_salida
+
+
+def _fmt_num(valor, es_pct=False):
+    if isinstance(valor, float) and es_pct:
+        return f"{valor:.2%}"
+    if isinstance(valor, float):
+        return f"{valor:,.0f} BOB" if abs(valor) >= 100 else f"{valor:,.2f} BOB"
+    return str(valor)
+
+
+def generar_presentacion(ruta_salida: Path = RUTA_PRESENTACION) -> Path:
+    datos = preparar_todo(RUTA_CASO)
+    kpis = datos["kpis"]
+    k = {row["KPI"]: row["Resultado actual"] for _, row in kpis.iterrows()}
+    stats = datos["stats_ventas"]
+    stats_m = datos["stats_metas"]
+
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Presentación Ejecutiva · Retail Omnicanal · Reto A</title>
+  <style>
+    :root {{
+      --primary: #1B4F72;
+      --secondary: #2874A6;
+      --accent: #148F77;
+      --accent-light: #E8F8F5;
+      --warning: #D68910;
+      --danger: #C0392B;
+      --bg: #F4F6F8;
+      --card-bg: #FFFFFF;
+      --text: #1F2D3D;
+      --text-muted: #5D6D7E;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{ font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif; margin: 0; color: var(--text); background: var(--bg); line-height: 1.5; }}
+    .container {{ max-width: 1100px; margin: 0 auto; padding: 24px; }}
+    .slide {{ background: var(--card-bg); padding: 40px 48px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.06); margin-bottom: 24px; border: 1px solid #E2E8F0; }}
+    h1 {{ color: var(--primary); margin: 8px 0 16px 0; font-size: 28px; }}
+    h2 {{ color: var(--secondary); border-bottom: 3px solid var(--accent); padding-bottom: 8px; margin-top: 0; font-size: 22px; }}
+    h3 {{ color: var(--primary); font-size: 18px; margin-top: 20px; }}
+    .tag {{ display: inline-block; background: var(--accent); color: white; padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }}
+    .badge-warn {{ background: var(--warning); }}
+    table {{ width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 13px; }}
+    th, td {{ border: 1px solid #E2E8F0; padding: 9px 12px; text-align: left; }}
+    th {{ background: var(--primary); color: white; font-weight: 600; }}
+    tr:nth-child(even) {{ background: #F8FAFC; }}
+    .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-top: 20px; }}
+    .kpi {{ background: #F8FAFC; border-left: 4px solid var(--accent); padding: 16px; border-radius: 8px; border: 1px solid #E2E8F0; border-left-width: 4px; }}
+    .kpi span {{ font-size: 13px; color: var(--text-muted); font-weight: 500; }}
+    .kpi strong {{ display: block; font-size: 24px; color: var(--primary); margin-top: 4px; }}
+    .callout {{ background: var(--accent-light); border-left: 4px solid var(--accent); padding: 16px; border-radius: 8px; margin: 16px 0; font-size: 14px; }}
+    .callout-warn {{ background: #FEF9E7; border-left: 4px solid var(--warning); padding: 16px; border-radius: 8px; margin: 16px 0; font-size: 14px; }}
+    .flex-row {{ display: flex; gap: 20px; flex-wrap: wrap; }}
+    .flex-col {{ flex: 1; min-width: 300px; }}
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="slide">
+    <span class="tag">Proyecto Final · Reto A</span>
+    <h1>Retail Omnicanal: Crecimiento, Margen e Inventario</h1>
+    <p><strong>Auditoría & Calidad:</strong> {stats['filas_raw']} filas RAW → {stats['filas_limpias']} limpias ({stats['filas_eliminadas']} eliminadas documentadas con motivo trazable).</p>
+    <p><strong>Meta Total Auditada:</strong> {stats_m['meta_total']:,.2f} BOB distribuida en 545 combinaciones Mes · Región · Canal.</p>
+    <div class="callout">
+      <strong>Pregunta Central de Negocio:</strong> ¿Dónde concentrar el crecimiento por región, canal y categoría para maximizar ventas sin destruir margen ni generar desabastecimiento?
+    </div>
+  </div>
+
+  <div class="slide">
+    <h2>Tablero de Indicadores Clave (KPIs)</h2>
+    <div class="kpi-grid">
+      <div class="kpi"><span>Ventas Netas</span><strong>{_fmt_num(k['Ventas netas'])}</strong></div>
+      <div class="kpi"><span>Margen Bruto</span><strong>{_fmt_num(k['Margen %'], True)}</strong></div>
+      <div class="kpi"><span>Utilidad Total</span><strong>{_fmt_num(k['Utilidad total'])}</strong></div>
+      <div class="kpi"><span>Cumplimiento de Meta</span><strong>{_fmt_num(k['Cumplimiento de meta'], True)}</strong></div>
+      <div class="kpi"><span>Tasa de Devolución</span><strong>{_fmt_num(k['Tasa de devolución'], True)}</strong></div>
+      <div class="kpi"><span>Descuento Ponderado</span><strong>{_fmt_num(k['Descuento ponderado'], True)}</strong></div>
+      <div class="kpi"><span>Ticket Promedio</span><strong>{_fmt_num(k['Ticket promedio'])}</strong></div>
+      <div class="kpi"><span>Pedidos Completados</span><strong>{k['Pedidos completados']:,}</strong></div>
+    </div>
+    <div class="callout-warn">
+      <strong>Nota Metodológica sobre el Cumplimiento (1.39%):</strong> El cumplimiento se calculó deduplicando la meta a nivel Mes · Región · Canal (55.97M BOB en 545 combinaciones). El ratio de 1.39% refleja que la base entregada es una <em>muestra de transacciones</em> (780.9k BOB) evaluada contra presupuestos departamentales mensuales completos.
+    </div>
+  </div>
+
+  <div class="slide">
+    <h2>Auditoría Forense de las 14 Combinaciones de Metas</h2>
+    <p>Se auditaron las 13 combinaciones con valores múltiples y 1 combinación sin meta, identificando los <code>Venta_ID</code> asociados y la causa raíz:</p>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Mes · Región · Canal</th>
+          <th>Valores RAW</th>
+          <th>Meta Corregida</th>
+          <th>Tipo de Error</th>
+          <th>Justificación Metodológica</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td>2024-03 · Potosí · Marketplace</td><td>72,039.98 / 87,282.00</td><td><strong>72,039.98 BOB</strong></td><td>Contaminación por tienda</td><td>VT0005331 provino de tienda T009 (Cochabamba); se ratifica meta de tiendas locales T015/T016.</td></tr>
+        <tr><td>2</td><td>2024-04 · La Paz · Tienda</td><td>137,908.32 / 193,849.26</td><td><strong>193,849.26 BOB</strong></td><td>Contaminación por tienda</td><td>VT0006333 asignada a T012 importó meta de Cochabamba; se valida meta oficial con 10 tiendas de La Paz.</td></tr>
+        <tr><td>3</td><td>2024-06 · Potosí · Tienda</td><td>177,388.08 / 201,185.26</td><td><strong>201,185.26 BOB</strong></td><td>Contaminación por tienda</td><td>VT0000685 asignada a T004 arrastró meta de La Paz; se valida meta con 10 tiendas de Potosí.</td></tr>
+        <tr><td>4</td><td>2024-09 · Cochabamba · WhatsApp</td><td>68,949.92 / 148,910.81</td><td><strong>68,949.92 BOB</strong></td><td>Contaminación por canal</td><td>148,910.81 es la meta física de Tienda; 68,949.92 BOB corresponde al canal digital WhatsApp.</td></tr>
+        <tr><td>5</td><td>2024-11 · Potosí · E-commerce</td><td>77,981.44 / 91,910.55</td><td><strong>77,981.44 BOB</strong></td><td>Contaminación por tienda</td><td>VT0004694 asignada a T011 importó meta de Cochabamba; se valida meta de Potosí con 3 registros.</td></tr>
+        <tr><td>6</td><td>2024-11 · Sucre · E-commerce</td><td>70,991.46 / 163,312.54</td><td><strong>70,991.46 BOB</strong></td><td>Contaminación por canal</td><td>163,312.54 es la meta de Tienda física; 70,991.46 BOB corresponde a E-commerce.</td></tr>
+        <tr><td>7</td><td>2025-01 · Sucre · Tienda</td><td>139,765.58 / 178,667.19</td><td><strong>139,765.58 BOB</strong></td><td>Contaminación por tienda</td><td>VT0003535 importó meta de Potosí; 139,765.58 BOB es la meta oficial respaldada por 9 tiendas.</td></tr>
+        <tr><td>8</td><td>2025-02 · Cochabamba · Tienda</td><td>169,210.56 / 174,033.03</td><td><strong>169,210.56 BOB</strong></td><td>Contaminación por tienda</td><td>VT0002904 asignada a T007 importó meta de Santa Cruz; se valida meta oficial con 11 tiendas.</td></tr>
+        <tr><td>9</td><td>2025-02 · Santa Cruz · E-commerce</td><td>84,128.79 / 86,253.49</td><td><strong>84,128.79 BOB</strong></td><td>Contaminación por tienda</td><td>VT0002058 asignada a T012 importó meta de Cochabamba; 84,128.79 BOB es la meta de Santa Cruz.</td></tr>
+        <tr><td>10</td><td>2025-03 · La Paz · E-commerce</td><td>76,648.32 / 84,388.51</td><td><strong>76,648.32 BOB</strong></td><td>Contaminación por tienda</td><td>VT0001369 asignada a T014 importó meta de Potosí; 76,648.32 BOB es la meta de La Paz.</td></tr>
+        <tr><td>11</td><td>2025-10 · Potosí · E-commerce</td><td>98,671.43 / 166,027.73</td><td><strong>98,671.43 BOB</strong></td><td>Contaminación por canal</td><td>166,027.73 es la meta física de Tienda; 98,671.43 BOB es la meta de E-commerce respaldada por 6 ventas.</td></tr>
+        <tr><td>12</td><td>2025-12 · Santa Cruz · WhatsApp</td><td>60,781.90 / 186,128.69</td><td><strong>60,781.90 BOB</strong></td><td>Contaminación por canal</td><td>186,128.69 es la meta navideña de Tienda física; 60,781.90 BOB es la meta de WhatsApp.</td></tr>
+        <tr><td>13</td><td>2026-02 · Sucre · Tienda</td><td>92,109.62 / 120,492.00</td><td><strong>120,492.00 BOB</strong></td><td>Contaminación por canal</td><td>92,109.62 es la meta de E-commerce; 120,492.00 BOB es la meta de Tienda validada por 7 registros.</td></tr>
+        <tr><td>14</td><td>2025-09 · Santa Cruz · Marketplace</td><td>Sin meta en RAW</td><td><strong>Sin meta (NaN)</strong></td><td>Meta ausente en origen</td><td>Registro único VT0010965 sin presupuesto en RAW. Se clasifica como Sin meta sin imputar cero.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="slide">
+    <h2>Recomendaciones Estratégicas y Plan de Acción</h2>
+    <div class="flex-row">
+      <div class="flex-col">
+        <h3>1. Expansión Focalizada (Pilotos)</h3>
+        <ul>
+          <li><strong>Sucre · Tienda · Electrónica:</strong> Mayor margen regional (34.2%) con baja tasa de devolución.</li>
+          <li><strong>Potosí · Tienda · Hogar:</strong> Alta rentabilidad unitaria (38.1%) y stock saludable.</li>
+          <li><strong>Santa Cruz · Tienda · Electrónica:</strong> Motor de volumen comercial; requiere control estricto de roturas de stock.</li>
+        </ul>
+      </div>
+      <div class="flex-col">
+        <h3>2. Guardarraíles de Gestión</h3>
+        <ul>
+          <li><strong>Margen mínimo:</strong> No escalar combinaciones por debajo del 31.1%.</li>
+          <li><strong>Devolución máxima:</strong> Guardarraíl del 8.0% antes de aprobar mayor inversión en marketing.</li>
+          <li><strong>Recalibración de Metas:</strong> Ajustar metas departamentales para alinear presupuestos macro con capacidad transaccional por canal.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>"""
+    ruta_salida.write_text(html, encoding="utf-8")
+    return ruta_salida
+
+
+def main():
+    excel = generar_excel()
+    presentacion = generar_presentacion()
+    datos = preparar_todo(RUTA_CASO)
+    print(f"Excel generado: {excel}")
+    print(f"Presentación generada: {presentacion}")
+    print(f"Filas limpias: {datos['stats_ventas']['filas_limpias']}")
+    print(f"Filas eliminadas: {datos['stats_ventas']['filas_eliminadas']}")
+    print(f"Meta total: {datos['stats_metas']['meta_total']:,.2f} BOB")
+    print(f"Cumplimiento global: {datos['stats_metas']['cumplimiento_global_pond']:.2%}")
+
+
+if __name__ == "__main__":
+    main()
+
